@@ -4,12 +4,12 @@ from math import sqrt, pi, sin, cos
 import os
 
 from qgis.PyQt.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QFileDialog, QMessageBox
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import Qt, QCoreApplication, QRectF
 
 from qgis.core import (QgsApplication, QgsProject, QgsVectorLayer, 
                       QgsFeature, QgsGeometry, QgsPointXY, QgsWkbTypes,
                       QgsCoordinateReferenceSystem, QgsField, QgsFields, QgsRectangle,
-                      QgsSymbol, QgsSingleSymbolRenderer, QgsFillSymbol, QgsVectorFileWriter)
+                      QgsSymbol, QgsSingleSymbolRenderer, QgsFillSymbol, QgsVectorFileWriter, QgsPrintLayout, QgsLayoutItemMap, QgsLayoutExporter, QgsLayoutItemLabel)
 from qgis.gui import QgsMapCanvas, QgsMapTool, QgsRubberBand
 from qgis.PyQt.QtCore import QVariant
 from qgis.PyQt.QtGui import QColor
@@ -122,6 +122,11 @@ class QGISMainWindow(QMainWindow):
         save_button = QPushButton("Сохранить проект")
         save_button.clicked.connect(self.save_project)
         button_layout.addWidget(save_button)
+        
+        export_card_button = QPushButton("Выгрузить карточку")
+        export_card_button.clicked.connect(self.export_card)
+        button_layout.addWidget(export_card_button)
+        
         button_layout.addStretch()
         
         main_layout.addLayout(button_layout)
@@ -177,7 +182,7 @@ class QGISMainWindow(QMainWindow):
         
         print(f"Слой создан: {self.circle_layer.name()}")
         
-        # Явно сохраняем shapefile в C:\te
+
         self.shapefile_path = os.path.abspath(os.path.join("C:\\te", "circles.shp"))
         
     def save_to_shapefile(self):
@@ -197,14 +202,14 @@ class QGISMainWindow(QMainWindow):
             print(f"Ошибка сохранения: {error}")
 
     def replace_memory_layer_with_shapefile(self):
-        # Удаляем memory-слой из проекта
+
         self.project.removeMapLayer(self.circle_layer.id())
-        # Загружаем слой из shapefile
+
         shapefile_layer = QgsVectorLayer(self.shapefile_path, "Circles", "ogr")
         if shapefile_layer.isValid():
             self.project.addMapLayer(shapefile_layer)
             self.circle_layer = shapefile_layer
-            # Переназначаем инструмент рисования на новый слой
+
             self.circle_tool = CircleDrawTool(self.canvas, self.circle_layer, self)
             self.canvas.setMapTool(self.circle_tool)
             self.canvas.setLayers([self.circle_layer])
@@ -226,6 +231,57 @@ class QGISMainWindow(QMainWindow):
                 QMessageBox.information(self, "Успех", f"Проект сохранен: {filename}")
             else:
                 QMessageBox.critical(self, "Ошибка", "Не удалось сохранить проект")
+
+    def export_card(self):
+        if self.circle_layer is None:
+            QMessageBox.warning(self, "Нет слоя", "Слой окружностей не найден.")
+            return
+        features = list(self.circle_layer.getFeatures())
+        if not features:
+            QMessageBox.warning(self, "Нет кругов", "Сначала добавьте круг на карту.")
+            return
+        circle = features[-1]
+        geom = circle.geometry()
+        center = geom.centroid().asPoint()
+        radius = circle["radius"]
+
+
+        layout = QgsPrintLayout(self.project)
+        layout.initializeDefaults()
+        layout.setName("CardLayout")
+
+        manager = self.project.layoutManager()
+
+        old_layout = manager.layoutByName("CardLayout")
+        if old_layout:
+            manager.removeLayout(old_layout)
+        manager.addLayout(layout)
+
+        map_item = QgsLayoutItemMap(layout)
+        map_item.attemptSetSceneRect(QRectF(10, 10, 120, 120))
+        map_item.setFrameEnabled(True)
+        map_item.setLayers([self.circle_layer])
+
+        rect = geom.boundingBox()
+        rect.grow(rect.width() * 0.5)
+        map_item.setExtent(rect)
+        layout.addLayoutItem(map_item)
+
+
+        label = QgsLayoutItemLabel(layout)
+        label.setText(f"Координаты центра: {center.x():.4f}, {center.y():.4f}\nРадиус: {radius:.2f}")
+        label.adjustSizeToText()
+        label.attemptSetSceneRect(QRectF(10, 140, 120, 30))
+        layout.addLayoutItem(label)
+
+
+        output_path = os.path.abspath(os.path.join("C:\\te", "card_export.pdf"))
+        exporter = QgsLayoutExporter(layout)
+        result = exporter.exportToPdf(output_path, QgsLayoutExporter.PdfExportSettings())
+        if result == QgsLayoutExporter.Success:
+            QMessageBox.information(self, "Успех", f"Карточка экспортирована: {output_path}")
+        else:
+            QMessageBox.critical(self, "Ошибка", "Не удалось экспортировать карточку.")
 
 
 def main():
